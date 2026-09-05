@@ -4,7 +4,7 @@
 
 Provide a reversible Windows localization layer for the official GitHub Copilot App. The tool translates application chrome into Simplified Chinese without modifying `github.exe`, reading GitHub credentials, or translating repository and conversation content.
 
-The first supported target is GitHub Copilot App 1.1.15 installed at `C:\Path\To\github.exe`. The launcher must also discover common future install locations and report a clear error when no supported executable is found.
+The first supported target is GitHub Copilot App 1.1.15 installed at a user-selected path. The launcher must also discover common future install locations and report a clear error when no supported executable is found.
 
 ## Deliverables
 

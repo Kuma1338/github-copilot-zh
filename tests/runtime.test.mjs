@@ -71,10 +71,10 @@ test('translates numeric counts inside controlled labels', async () => {
 });
 
 test('translates dynamic status while preserving account names', async () => {
-  const dom = await createRuntime('<p>25% quota used</p><p>Provided by your GitHub account @Kuma1338.</p>');
+  const dom = await createRuntime('<p>25% quota used</p><p>Provided by your GitHub account @example-user.</p>');
   dom.window.__COPILOT_ZH__.translateRoot(dom.window.document.body);
   const paragraphs = [...dom.window.document.querySelectorAll('p')].map(element => element.textContent);
-  assert.deepEqual(paragraphs, ['已使用 25% 配额', '由你的 GitHub 账户 @Kuma1338 提供。']);
+  assert.deepEqual(paragraphs, ['已使用 25% 配额', '由你的 GitHub 账户 @example-user 提供。']);
 });
 
 test('skips code editable and conversation content', async () => {

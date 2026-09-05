@@ -2,6 +2,8 @@
 
 这是一个适用于 Windows 的非官方、本地汉化层。它通过独立快捷方式启动官方 GitHub Copilot App，并在 WebView2 页面加载后注入离线简体中文词典。
 
+本项目与 GitHub, Inc. 没有隶属、赞助或授权关系。项目不包含、不修改、不替换、不分发官方 GitHub Copilot 二进制文件、图标或应用资源；使用者必须自行安装官方应用，并自行确认其服务条款和软件许可。GitHub 和 GitHub Copilot 是其各自所有者的商标。
+
 ## 特点
 
 - 不修改、不替换官方 `github.exe`，GitHub 数字签名保持有效。
@@ -16,6 +18,10 @@
 - Windows 10 或 Windows 11 x64。
 - 已安装官方 GitHub Copilot App。
 - 当前已验证版本：`1.1.15`。
+
+## 平台支持
+
+当前版本仅支持 Windows x64。macOS 不能直接运行此版本，因为启动器、安装器、快捷方式、签名校验和进程启动逻辑均使用 Windows API、PowerShell、Authenticode 和 WebView2。中文词典与页面注入脚本可以复用；若官方 Copilot App 提供 macOS 版本，仍需为 macOS 重新实现应用发现、签名校验、启动参数、调试接口连接和安装入口，并针对 WKWebView 或官方实际使用的网页容器重新验证。
 
 ## 安装
 
@@ -56,6 +62,6 @@ GitHub Copilot 更新到未验证版本时，启动器会提示进入兼容模�
 
 先从系统托盘退出 GitHub Copilot，然后双击安装包中的 `卸载.cmd`，或运行 `%LOCALAPPDATA%\GitHubCopilotZh\卸载.cmd`。卸载只删除汉化目录和 `GitHub Copilot 中文版` 桌面快捷方式，不修改官方应用或用户数据。
 
-## 说明
+## 许可证
 
-本项目与 GitHub, Inc. 无隶属或授权关系，不分发 GitHub Copilot 的可执行文件、图标或应用资源。它只在本机调用用户已经安装并通过签名验证的官方应用。
+本项目代码使用 MIT License，详见 [`LICENSE`](LICENSE)。第三方依赖仍受其各自许可证约束。

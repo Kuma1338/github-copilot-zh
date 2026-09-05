@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Support GitHub Copilot App 1.1.15 at `C:\Path\To\github.exe` and configurable future paths.
+- Support GitHub Copilot App 1.1.15 at a discovered or configured path.
 - Never modify or replace the official `github.exe`.
 - Refuse unsigned executables and executables not signed by GitHub, Inc.
 - Bind DevTools through WebView2 loopback behavior and connect only to `127.0.0.1`.
@@ -84,7 +84,7 @@ Expected: FAIL because the modules and interfaces do not exist.
 
 - [ ] **Step 3: Implement configuration, discovery, signature verification, and GUI messages**
 
-Use `sysinfo` for running-process detection. Discover the executable in this order: configured path, matching running process path, uninstall registry data queried by PowerShell, observed `C:\Path\To\github.exe`, and common per-user/program-files paths. Encode the signature PowerShell script as UTF-16LE Base64 before invoking `powershell.exe -EncodedCommand`; require `Status == Valid` and a signer subject containing `O="GitHub, Inc."` or `CN="GitHub, Inc."`.
+Use `sysinfo` for running-process detection. Discover the executable in this order: configured path, matching running process path, uninstall registry data queried by PowerShell, and common per-user/program-files paths. Encode the signature PowerShell script as UTF-16LE Base64 before invoking `powershell.exe -EncodedCommand`; require `Status == Valid` and a signer subject containing `O="GitHub, Inc."` or `CN="GitHub, Inc."`.
 
 The GUI entry point must use:
 
@@ -102,7 +102,7 @@ Merge any pre-existing `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` value with:
 
 Run: `cargo test config::tests app::tests signature::tests`
 
-Expected: PASS, including a live signature check against `C:\Path\To\github.exe` when present.
+Expected: PASS, including a live signature check against the locally installed `github.exe` when present.
 
 - [ ] **Step 5: Commit the launcher foundation**
 
@@ -290,7 +290,7 @@ git commit -m "feat: package Windows localization installer"
 
 - [ ] **Step 1: Record the original executable evidence**
 
-Run `Get-FileHash 'C:\Path\To\github.exe' -Algorithm SHA256`, version inspection, and `Get-AuthenticodeSignature`; save hash, version, signature status, signer, and timestamp in the report.
+Run `Get-FileHash '<installed-copilot-path>\github.exe' -Algorithm SHA256`, version inspection, and `Get-AuthenticodeSignature`; save hash, version, signature status, signer, and timestamp in the report.
 
 - [ ] **Step 2: Install the localization tool**
 
@@ -321,4 +321,4 @@ git commit -m "test: verify Copilot Chinese launcher on Windows"
 
 - [ ] **Step 8: Copy the final ZIP to the user output directory**
 
-Copy the verified ZIP to `C:\Users\<user>\Documents\Codex\2026-09-05\ba\outputs\GitHubCopilotZh-0.1.0-win-x64.zip` and verify its SHA-256 matches the staged artifact.
+Copy the verified ZIP to the project output directory and verify its SHA-256 matches the staged artifact.
