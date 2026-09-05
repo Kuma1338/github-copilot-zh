@@ -1,0 +1,12 @@
+{
+  "name": "github-copilot-zh-runtime-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/runtime.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
+
