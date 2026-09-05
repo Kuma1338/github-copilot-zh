@@ -110,6 +110,40 @@ pub fn launch_copilot(path: &Path, port: u16) -> Result<Child> {
         .with_context(|| format!("无法启动 {}", path.display()))
 }
 
+pub fn product_version(path: &Path) -> Result<String> {
+    let script = r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Output (Get-Item -LiteralPath $env:COPILOT_ZH_VERSION_PATH).VersionInfo.ProductVersion
+"#;
+    let encoded = crate::signature::encode_powershell(script);
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &encoded,
+        ])
+        .env("COPILOT_ZH_VERSION_PATH", path);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().context("无法读取 GitHub Copilot 版本")?;
+    if !output.status.success() {
+        bail!("GitHub Copilot 版本查询失败")
+    }
+    parse_product_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn parse_product_version(output: &str) -> Result<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+        .context("GitHub Copilot 版本信息为空")
+}
+
 pub fn webview_arguments(existing: &str, port: u16) -> String {
     let required =
         format!("--remote-debugging-port={port} --remote-allow-origins=http://127.0.0.1:{port}");
@@ -137,7 +171,7 @@ fn hidden_powershell(script: &str) -> Result<std::process::Output> {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_executable_from_candidates, webview_arguments};
+    use super::{discover_executable_from_candidates, parse_product_version, webview_arguments};
     use crate::config::AppConfig;
     use std::fs;
 
@@ -173,5 +207,11 @@ mod tests {
             args,
             "--disable-features=Example --remote-debugging-port=32123 --remote-allow-origins=http://127.0.0.1:32123"
         );
+    }
+
+    #[test]
+    fn product_version_parser_trims_process_output() {
+        assert_eq!(parse_product_version("1.1.15\r\n").unwrap(), "1.1.15");
+        assert!(parse_product_version("\r\n").is_err());
     }
 }
