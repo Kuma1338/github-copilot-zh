@@ -1,7 +1,7 @@
 use crate::config::Dictionary;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     net::TcpListener,
@@ -124,6 +124,12 @@ fn inject_target(target: &DevToolsTarget, source: &str) -> Result<()> {
         .as_deref()
         .context("DevTools 目标缺少 WebSocket 地址")?;
     let (mut socket, _) = connect(socket_url).context("无法连接 WebView2 DevTools WebSocket")?;
+    match socket.get_mut() {
+        tungstenite::stream::MaybeTlsStream::Plain(stream) => stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .context("无法设置 DevTools WebSocket 读取超时")?,
+        _ => bail!("DevTools WebSocket 不是本机明文连接"),
+    }
     let commands = [
         json!({"id": 1, "method": "Page.enable"}),
         json!({"id": 2, "method": "Page.addScriptToEvaluateOnNewDocument", "params": {"source": source}}),
@@ -134,13 +140,54 @@ fn inject_target(target: &DevToolsTarget, source: &str) -> Result<()> {
             .send(Message::Text(command.to_string().into()))
             .context("无法发送 DevTools 注入命令")?;
     }
+
+    let mut pending = HashSet::from([1, 2, 3]);
+    while !pending.is_empty() {
+        let message = socket.read().context("等待 DevTools 注入响应失败或超时")?;
+        if let Message::Text(text) = message {
+            if let Some(id) = parse_cdp_response(text.as_ref())? {
+                pending.remove(&id);
+            }
+        }
+    }
+
     let _ = socket.close(None);
     Ok(())
 }
 
+fn parse_cdp_response(message: &str) -> Result<Option<u64>> {
+    let value: Value = serde_json::from_str(message).context("DevTools 响应不是有效 JSON")?;
+    let Some(id) = value.get("id").and_then(Value::as_u64) else {
+        return Ok(None);
+    };
+
+    if let Some(error) = value.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知协议错误");
+        bail!("DevTools 命令 {id} 失败：{message}");
+    }
+
+    if let Some(exception) = value
+        .pointer("/result/exceptionDetails/text")
+        .and_then(Value::as_str)
+    {
+        bail!("DevTools 脚本 {id} 执行失败：{exception}");
+    }
+
+    if value.get("result").is_none() {
+        bail!("DevTools 命令 {id} 的响应缺少 result");
+    }
+
+    Ok(Some(id))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{allocate_loopback_port, build_injection_source, parse_targets};
+    use super::{
+        allocate_loopback_port, build_injection_source, parse_cdp_response, parse_targets,
+    };
     use crate::config::{Dictionary, Pattern};
     use std::collections::BTreeMap;
 
@@ -188,5 +235,33 @@ mod tests {
         assert_ne!(port, 0);
         let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
         drop(listener);
+    }
+
+    #[test]
+    fn parses_successful_cdp_command_responses() {
+        assert_eq!(
+            parse_cdp_response(r#"{"id":2,"result":{"identifier":"1"}}"#).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            parse_cdp_response(r#"{"method":"Page.loadEventFired"}"#).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_cdp_command_and_script_errors() {
+        let protocol_error =
+            parse_cdp_response(r#"{"id":2,"error":{"code":-32601,"message":"Method not found"}}"#)
+                .unwrap_err()
+                .to_string();
+        assert!(protocol_error.contains("Method not found"));
+
+        let script_error = parse_cdp_response(
+            r#"{"id":3,"result":{"result":{"type":"object"},"exceptionDetails":{"text":"Uncaught"}}}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(script_error.contains("Uncaught"));
     }
 }
