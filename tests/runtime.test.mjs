@@ -55,6 +55,12 @@ test('translates controlled parameterized labels', async () => {
   assert.equal(dom.window.document.querySelector('span').textContent, '3 个会话');
 });
 
+test('does not treat arbitrary words as numeric counts', async () => {
+  const dom = await createRuntime('<span>Manage sessions</span>');
+  dom.window.__COPILOT_ZH__.translateRoot(dom.window.document.body);
+  assert.equal(dom.window.document.querySelector('span').textContent, 'Manage sessions');
+});
+
 test('skips code editable and conversation content', async () => {
   const dom = await createRuntime('<nav>Home</nav><pre>Home</pre><code>Home</code><textarea>Home</textarea><section contenteditable="true">Home</section><article data-message-author-role="user">Home</article>');
   dom.window.__COPILOT_ZH__.translateRoot(dom.window.document.body);

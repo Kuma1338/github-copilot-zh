@@ -22,7 +22,7 @@ if ($DryRun) {
 $running = Get-Process -Name 'copilot-zh' -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -ne $PID }
 if ($running) {
-    throw '汉化启动器仍在运行。请先关闭 GitHub Copilot，再执行卸载。'
+    throw '汉化启动器仍在运行。请先从系统托盘退出 GitHub Copilot，再执行卸载。'
 }
 
 if (Test-Path -LiteralPath $shortcutPath) {

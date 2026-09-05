@@ -23,7 +23,7 @@
       const match = /^\{([A-Za-z][A-Za-z0-9_]*)\}$/.exec(part);
       if (!match) return escapeRegex(part);
       names.push(match[1]);
-      return '(.+?)';
+      return match[1] === 'count' ? '([0-9][0-9,.]*)' : '(.+?)';
     }).join('');
     return { regex: new RegExp(`^${source}$`), names, target: pattern.target };
   }
@@ -124,4 +124,3 @@
 
   globalThis.__COPILOT_ZH__ = { start, translateRoot, translateValue };
 })();
-

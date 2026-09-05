@@ -22,7 +22,7 @@
 1. 解压整个 ZIP，不能只取出单个 EXE。
 2. 双击 `安装.cmd`。
 3. 安装器会验证官方程序的 Authenticode 签名。
-4. 桌面出现 `GitHub Copilot 中文版` 快捷方式后，先正常关闭正在运行的 Copilot，再双击该快捷方式。
+4. 桌面出现 `GitHub Copilot 中文版` 快捷方式后，先从系统托盘退出正在运行的 Copilot，再双击该快捷方式。
 
 安装位置为 `%LOCALAPPDATA%\GitHubCopilotZh`，不需要管理员权限。
 
@@ -38,7 +38,7 @@ GitHub Copilot 更新到未验证版本时，启动器会提示进入兼容模�
 
 **提示 Copilot 正在运行**
 
-先从窗口右上角正常关闭 GitHub Copilot，再重新双击中文快捷方式。启动器不会强制结束官方应用。
+先从系统托盘菜单退出 GitHub Copilot，再重新双击中文快捷方式。只关闭窗口时，官方应用可能仍在后台运行；启动器不会强制结束官方应用。
 
 **仍有部分英文**
 
@@ -54,7 +54,7 @@ GitHub Copilot 更新到未验证版本时，启动器会提示进入兼容模�
 
 ## 卸载
 
-先关闭 GitHub Copilot，然后双击安装包中的 `卸载.cmd`，或运行 `%LOCALAPPDATA%\GitHubCopilotZh\卸载.cmd`。卸载只删除汉化目录和 `GitHub Copilot 中文版` 桌面快捷方式，不修改官方应用或用户数据。
+先从系统托盘退出 GitHub Copilot，然后双击安装包中的 `卸载.cmd`，或运行 `%LOCALAPPDATA%\GitHubCopilotZh\卸载.cmd`。卸载只删除汉化目录和 `GitHub Copilot 中文版` 桌面快捷方式，不修改官方应用或用户数据。
 
 ## 说明
 

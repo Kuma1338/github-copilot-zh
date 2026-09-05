@@ -2,15 +2,101 @@ use crate::config::AppConfig;
 use anyhow::{bail, Context, Result};
 use std::{
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
     process::{Child, Command},
 };
 use sysinfo::System;
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use std::{
+    mem::{size_of, zeroed},
+    os::windows::{ffi::OsStrExt, process::CommandExt},
+    ptr::{null, null_mut},
+};
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, LocalFree, HANDLE, WAIT_FAILED},
+    Security::{
+        Authorization::ConvertStringSidToSidW, DuplicateTokenEx, GetLengthSid, GetSidSubAuthority,
+        GetSidSubAuthorityCount, GetTokenInformation, SecurityImpersonation, SetTokenInformation,
+        TokenIntegrityLevel, TokenPrimary, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT,
+        TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    },
+    System::Threading::{
+        CreateProcessWithTokenW, GetCurrentProcess, OpenProcessToken, WaitForSingleObject,
+        CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION, STARTUPINFOW,
+    },
+};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const MEDIUM_INTEGRITY_RID: u32 = 0x2000;
+#[cfg(windows)]
+const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
+#[cfg(windows)]
+const SE_GROUP_INTEGRITY: u32 = 0x20;
+
+pub enum CopilotProcess {
+    Standard(Child),
+    #[cfg(windows)]
+    Token {
+        handle: HANDLE,
+        id: u32,
+    },
+}
+
+impl CopilotProcess {
+    pub fn id(&self) -> u32 {
+        match self {
+            Self::Standard(child) => child.id(),
+            #[cfg(windows)]
+            Self::Token { id, .. } => *id,
+        }
+    }
+
+    pub fn wait(&mut self) -> Result<()> {
+        match self {
+            Self::Standard(child) => {
+                child.wait().context("等待 GitHub Copilot 退出失败")?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Token { handle, .. } => {
+                let result = unsafe { WaitForSingleObject(*handle, INFINITE) };
+                if result == WAIT_FAILED {
+                    return Err(std::io::Error::last_os_error())
+                        .context("等待 GitHub Copilot 退出失败");
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CopilotProcess {
+    fn drop(&mut self) {
+        if let Self::Token { handle, .. } = self {
+            unsafe {
+                CloseHandle(*handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+struct WinHandle(HANDLE);
+
+#[cfg(windows)]
+impl Drop for WinHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
 
 pub fn discover_executable(config: &AppConfig) -> Result<PathBuf> {
     discover_executable_from_candidates(config, default_candidates())
@@ -98,16 +184,202 @@ Get-ItemProperty $roots -ErrorAction SilentlyContinue |
         .unwrap_or_default()
 }
 
-pub fn launch_copilot(path: &Path, port: u16) -> Result<Child> {
-    let mut command = Command::new(path);
+pub fn launch_copilot(path: &Path, port: u16) -> Result<CopilotProcess> {
     let existing = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
     let args = webview_arguments(&existing, port);
+
+    #[cfg(windows)]
+    if needs_medium_integrity_launch(current_integrity_rid()?) {
+        return launch_with_medium_integrity(path, &args);
+    }
+
+    let mut command = Command::new(path);
     command.env("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", args);
     #[cfg(windows)]
     command.creation_flags(0);
     command
         .spawn()
+        .map(CopilotProcess::Standard)
         .with_context(|| format!("无法启动 {}", path.display()))
+}
+
+fn needs_medium_integrity_launch(integrity_rid: u32) -> bool {
+    integrity_rid > MEDIUM_INTEGRITY_RID
+}
+
+#[cfg(windows)]
+fn current_integrity_rid() -> Result<u32> {
+    let mut raw_token = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw_token) } == 0 {
+        return Err(std::io::Error::last_os_error()).context("无法读取当前进程权限级别");
+    }
+    let token = WinHandle(raw_token);
+    let mut required = 0;
+    unsafe {
+        GetTokenInformation(token.0, TokenIntegrityLevel, null_mut(), 0, &mut required);
+    }
+    if required == 0 {
+        return Err(std::io::Error::last_os_error()).context("无法读取当前进程完整性信息");
+    }
+
+    let mut buffer = vec![0u8; required as usize];
+    if unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenIntegrityLevel,
+            buffer.as_mut_ptr().cast(),
+            required,
+            &mut required,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error()).context("无法读取当前进程完整性信息");
+    }
+
+    let label =
+        unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()) };
+    let count = unsafe { *GetSidSubAuthorityCount(label.Label.Sid) };
+    if count == 0 {
+        bail!("当前进程完整性 SID 无效")
+    }
+    Ok(unsafe { *GetSidSubAuthority(label.Label.Sid, u32::from(count - 1)) })
+}
+
+#[cfg(windows)]
+fn launch_with_medium_integrity(path: &Path, webview_args: &str) -> Result<CopilotProcess> {
+    let mut raw_source = null_mut();
+    let access = TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT;
+    if unsafe { OpenProcessToken(GetCurrentProcess(), access, &mut raw_source) } == 0 {
+        return Err(std::io::Error::last_os_error()).context("无法打开启动器进程令牌");
+    }
+    let source = WinHandle(raw_source);
+
+    let mut raw_token = null_mut();
+    if unsafe {
+        DuplicateTokenEx(
+            source.0,
+            MAXIMUM_ALLOWED,
+            null(),
+            SecurityImpersonation,
+            TokenPrimary,
+            &mut raw_token,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error()).context("无法创建 GitHub Copilot 进程令牌");
+    }
+    let token = WinHandle(raw_token);
+
+    let medium_sid_text = OsString::from("S-1-16-8192")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut medium_sid = null_mut();
+    if unsafe { ConvertStringSidToSidW(medium_sid_text.as_ptr(), &mut medium_sid) } == 0 {
+        return Err(std::io::Error::last_os_error()).context("无法创建中等完整性 SID");
+    }
+    let label = TOKEN_MANDATORY_LABEL {
+        Label: SID_AND_ATTRIBUTES {
+            Sid: medium_sid,
+            Attributes: SE_GROUP_INTEGRITY,
+        },
+    };
+    let label_size =
+        size_of::<TOKEN_MANDATORY_LABEL>() + unsafe { GetLengthSid(medium_sid) } as usize;
+    let set_result = unsafe {
+        SetTokenInformation(
+            token.0,
+            TokenIntegrityLevel,
+            (&label as *const TOKEN_MANDATORY_LABEL).cast(),
+            label_size as u32,
+        )
+    };
+    unsafe {
+        LocalFree(medium_sid);
+    }
+    if set_result == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("无法降低 GitHub Copilot 进程完整性级别");
+    }
+
+    let application = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut command_line = OsString::from(format!("\"{}\"", path.display()))
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let current_directory = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let environment = build_environment_block_from(env::vars_os(), webview_args);
+    let mut startup: STARTUPINFOW = unsafe { zeroed() };
+    startup.cb = size_of::<STARTUPINFOW>() as u32;
+    let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
+
+    let created = unsafe {
+        CreateProcessWithTokenW(
+            token.0,
+            0,
+            application.as_ptr(),
+            command_line.as_mut_ptr(),
+            CREATE_UNICODE_ENVIRONMENT,
+            environment.as_ptr().cast(),
+            current_directory.as_ptr(),
+            &startup,
+            &mut process_info,
+        )
+    };
+    if created == 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("无法以中等完整性启动 {}", path.display()));
+    }
+    unsafe {
+        CloseHandle(process_info.hThread);
+    }
+    Ok(CopilotProcess::Token {
+        handle: process_info.hProcess,
+        id: process_info.dwProcessId,
+    })
+}
+
+#[cfg(windows)]
+fn build_environment_block_from<I>(variables: I, webview_args: &str) -> Vec<u16>
+where
+    I: IntoIterator<Item = (OsString, OsString)>,
+{
+    let mut entries = variables
+        .into_iter()
+        .filter(|(key, _)| {
+            !key.to_string_lossy()
+                .eq_ignore_ascii_case("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+        })
+        .collect::<Vec<_>>();
+    entries.push((
+        OsString::from("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"),
+        OsString::from(webview_args),
+    ));
+    entries.sort_by(|(left, _), (right, _)| {
+        left.to_string_lossy()
+            .to_ascii_lowercase()
+            .cmp(&right.to_string_lossy().to_ascii_lowercase())
+    });
+
+    let mut block = Vec::new();
+    for (key, value) in entries {
+        block.extend(key.encode_wide());
+        block.push('=' as u16);
+        block.extend(value.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    block
 }
 
 pub fn product_version(path: &Path) -> Result<String> {
@@ -171,9 +443,12 @@ fn hidden_powershell(script: &str) -> Result<std::process::Output> {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_executable_from_candidates, parse_product_version, webview_arguments};
+    use super::{
+        build_environment_block_from, discover_executable_from_candidates,
+        needs_medium_integrity_launch, parse_product_version, webview_arguments,
+    };
     use crate::config::AppConfig;
-    use std::fs;
+    use std::{ffi::OsString, fs};
 
     #[test]
     fn configured_existing_path_takes_precedence() {
@@ -213,5 +488,42 @@ mod tests {
     fn product_version_parser_trims_process_output() {
         assert_eq!(parse_product_version("1.1.15\r\n").unwrap(), "1.1.15");
         assert!(parse_product_version("\r\n").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn environment_block_replaces_existing_webview_arguments() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let block = build_environment_block_from(
+            vec![
+                (OsString::from("Path"), OsString::from(r"C:\\Windows")),
+                (
+                    OsString::from("webview2_additional_browser_arguments"),
+                    OsString::from("--old"),
+                ),
+            ],
+            "--remote-debugging-port=43923",
+        );
+        assert!(block.ends_with(&[0, 0]));
+
+        let entries = block[..block.len() - 1]
+            .split(|unit| *unit == 0)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| OsString::from_wide(entry).to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(entries.contains(&r"Path=C:\\Windows".to_owned()));
+        assert!(entries.contains(
+            &"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=43923".to_owned()
+        ));
+        assert!(!entries.iter().any(|entry| entry.ends_with("=--old")));
+    }
+
+    #[test]
+    fn elevated_processes_require_a_medium_integrity_child() {
+        assert!(!needs_medium_integrity_launch(0x1000));
+        assert!(!needs_medium_integrity_launch(0x2000));
+        assert!(needs_medium_integrity_launch(0x3000));
+        assert!(needs_medium_integrity_launch(0x4000));
     }
 }

@@ -139,4 +139,4 @@ $shortcut.Description = '使用简体中文界面启动 GitHub Copilot App'
 $shortcut.Save()
 
 Write-Output "安装完成：$shortcutPath"
-Write-Output '首次使用前，请先关闭正在运行的 GitHub Copilot。'
+Write-Output '首次使用前，请先从系统托盘退出正在运行的 GitHub Copilot。'

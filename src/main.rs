@@ -26,7 +26,7 @@ fn run() -> Result<()> {
     if app::is_copilot_running(&executable) {
         ui::show_info(
             "GitHub Copilot 中文版",
-            "GitHub Copilot 正在运行。请先正常关闭应用，然后重新打开中文快捷方式。",
+            "GitHub Copilot 正在运行。请先从系统托盘退出应用，然后重新打开中文快捷方式。",
         );
         return Ok(());
     }
@@ -70,7 +70,6 @@ fn run() -> Result<()> {
                     errors: 1,
                 },
             );
-            let _ = child.wait();
             return Err(error);
         }
     }
