@@ -100,6 +100,7 @@
     "Installed": "已安装",
     "Search featured extensions...": "搜索精选扩展...",
     "Search featured extensions…": "搜索精选扩展…",
+    "Search featured extensions": "搜索精选扩展",
     "Editor’s picks": "编辑精选",
     "Standout ways to customize Copilot.": "探索出色的 Copilot 自定义方式。",
     "Skill": "技能",
@@ -461,6 +462,18 @@
     {
       "source": "Search {count} palettes…",
       "target": "搜索 {count} 个调色板…"
+    },
+    {
+      "source": "Search {count} skills",
+      "target": "搜索 {count} 个技能"
+    },
+    {
+      "source": "Search {count} skills...",
+      "target": "搜索 {count} 个技能..."
+    },
+    {
+      "source": "Search {count} skills…",
+      "target": "搜索 {count} 个技能…"
     }
   ],
   "excludedSelectors": [

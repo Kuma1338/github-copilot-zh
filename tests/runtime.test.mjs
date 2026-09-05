@@ -12,7 +12,8 @@ const dictionary = {
     'Search skills...': '搜索技能...'
   },
   patterns: [
-    { source: '{count} sessions', target: '{count} 个会话' }
+    { source: '{count} sessions', target: '{count} 个会话' },
+    { source: 'Search {count} skills', target: '搜索 {count} 个技能' }
   ],
   excludedSelectors: [
     'code',
@@ -59,6 +60,12 @@ test('does not treat arbitrary words as numeric counts', async () => {
   const dom = await createRuntime('<span>Manage sessions</span>');
   dom.window.__COPILOT_ZH__.translateRoot(dom.window.document.body);
   assert.equal(dom.window.document.querySelector('span').textContent, 'Manage sessions');
+});
+
+test('translates numeric counts inside controlled labels', async () => {
+  const dom = await createRuntime('<input aria-label="Search 12 skills">');
+  dom.window.__COPILOT_ZH__.translateRoot(dom.window.document.body);
+  assert.equal(dom.window.document.querySelector('input').getAttribute('aria-label'), '搜索 12 个技能');
 });
 
 test('skips code editable and conversation content', async () => {
