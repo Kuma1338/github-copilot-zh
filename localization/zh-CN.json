@@ -533,7 +533,7 @@
     "WSL hosts (Preview)": "WSL 主机（预览）",
     "Connect to and create sessions inside WSL.": "连接到 WSL 并在其中创建会话。",
     "Rubber-duck agent": "橡皮鸭代理",
-    "Enable the rubber-duck subagent for constructive feedback on code and designs (Claude and GPT models only). Adds the /rubber-duck slash command to the composer. Restart the app after toggling.": "启用橡皮鸭子代理，为代码和设计提供建设性反馈（仅限 Claude 和 GPT 模型）。这会在输入框中添加 /rubber-duck 命令；切换后请重启应用。",
+    "Enable the rubber-duck subagent for constructive feedback on code and designs (Claude and GPT models only). Adds the /rubber-duck slash command to the composer. Restart the app after toggling.": "启用橡皮鸭代理，为代码和设计提供建设性反馈（仅限 Claude 和 GPT 模型）。这会在输入框中添加 /rubber-duck 命令；切换后请重启应用。",
     "Background agents and shell tasks": "后台代理和 Shell 任务",
     "Show and manage background agents and shell tasks from one Background pill in Sessions. Group work as Running, Idle, or Completed; inspect shell details; stop or cancel active work; and clear completed work.": "在会话的“后台”入口中统一查看和管理后台代理与 Shell 任务。可按运行中、空闲或已完成分组，查看 Shell 详情，停止或取消活动任务，并清理已完成任务。",
     "Voice dictation": "语音听写",
@@ -553,7 +553,13 @@
     "Browser screenshot annotations": "浏览器截图标注",
     "Annotate frozen browser screenshots with arrows, shapes, and comments.": "使用箭头、形状和评论标注冻结的浏览器截图。",
     "Connected": "已连接",
-    "Testing connection, GitHub Copilot": "正在测试连接，GitHub Copilot"
+    "Testing connection, GitHub Copilot": "正在测试连接，GitHub Copilot",
+    "Toggle sidebar": "切换侧边栏",
+    "without shortcut": "未设置快捷键",
+    "Assign…": "分配…",
+    "Assign shortcut for Expand tables": "为“展开表格”分配快捷键",
+    "Assign shortcut for Open review changes": "为“打开更改审查”分配快捷键",
+    "Assign shortcut for Capture screenshot": "为“截取屏幕截图”分配快捷键"
   },
   "patterns": [
     {
