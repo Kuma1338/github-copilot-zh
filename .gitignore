@@ -1,0 +1,6 @@
+.worktrees/
+target/
+node_modules/
+dist/
+artifacts/
+*.log
