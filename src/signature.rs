@@ -10,6 +10,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub fn verify_github_signature(path: &Path) -> Result<()> {
     let script = r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Import-Module "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
 $signature = Get-AuthenticodeSignature -LiteralPath $env:COPILOT_ZH_VERIFY_PATH
 Write-Output ([string]$signature.Status)
 if ($signature.SignerCertificate) { Write-Output $signature.SignerCertificate.Subject }
@@ -49,7 +50,11 @@ pub fn parse_signature_output(output: &str) -> Result<()> {
         bail!("官方程序签名状态无效：{status}")
     }
     let signer = lines.collect::<Vec<_>>().join(" ");
-    if !(signer.contains("CN=GitHub, Inc.") || signer.contains("O=GitHub, Inc.")) {
+    if !(signer.contains("CN=GitHub, Inc.")
+        || signer.contains("O=GitHub, Inc.")
+        || signer.contains("CN=\"GitHub, Inc.\"")
+        || signer.contains("O=\"GitHub, Inc.\""))
+    {
         bail!("程序签名者不是 GitHub, Inc.")
     }
     Ok(())
@@ -66,6 +71,12 @@ mod tests {
     }
 
     #[test]
+    fn accepts_quoted_github_signature_subject() {
+        let output = "Valid\nCN=\"GitHub, Inc.\", O=\"GitHub, Inc.\"";
+        parse_signature_output(output).unwrap();
+    }
+
+    #[test]
     fn rejects_non_github_signer() {
         let output = "Valid\nCN=Example Corp, O=Example Corp";
         let error = parse_signature_output(output).unwrap_err().to_string();
@@ -77,5 +88,14 @@ mod tests {
         let output = "NotSigned\n";
         let error = parse_signature_output(output).unwrap_err().to_string();
         assert!(error.contains("NotSigned"), "unexpected error: {error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verifies_the_installed_github_copilot_signature() {
+        let path = std::path::Path::new(r"C:\Path\To\github.exe");
+        if path.exists() {
+            super::verify_github_signature(path).unwrap();
+        }
     }
 }
