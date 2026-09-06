@@ -103,6 +103,15 @@ foreach ($required in @($sourceRuntime, $sourceDictionary, $sourceUninstaller, $
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "安装包缺少文件：$required" }
 }
 
+$sourceVersion = Join-Path $SourceRoot 'VERSION'
+$packageVersion = '0.2.0'
+if (Test-Path -LiteralPath $sourceVersion -PathType Leaf) {
+    $packageVersion = (Get-Content -LiteralPath $sourceVersion -Raw).Trim()
+}
+if ($packageVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$') {
+    throw "安装包版本号格式无效：$packageVersion"
+}
+
 $copilot = Get-CopilotExecutable -Root $SourceRoot
 $signature = Assert-GitHubSignature -Path $copilot
 $installRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'GitHubCopilotZh'))
@@ -130,12 +139,14 @@ Copy-Item -LiteralPath $sourceUninstallCmd -Destination (Join-Path $installRoot 
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
 $config = @{ copilot_executable = $copilot } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $installRoot 'config.json'), $config, $utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $installRoot 'VERSION'), "$packageVersion`n", $utf8NoBom)
 $manifest = @{
-    version = '0.2.0'
+    version = $packageVersion
     installedAt = [DateTime]::UtcNow.ToString('o')
     files = @(
         'copilot-zh.exe',
         'config.json',
+        'VERSION',
         'install-manifest.json',
         'localization\runtime.js',
         'localization\zh-CN.json',

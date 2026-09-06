@@ -100,7 +100,7 @@ macOS：退出中文 App 后，在解压目录双击 `卸载.command`，或运�
 
 ## 发布包
 
-GitHub Actions 在推送 `v*` 标签后构建并发布三个 ZIP：Windows x64、macOS arm64 和 macOS x86_64。每个包都包含 `SHA256SUMS.txt`。macOS 包是实验性支持包；它不包含官方 Copilot App，也不包含任何 GitHub 专有资源。
+GitHub Actions 在推送 `v*` 标签后构建并发布三个 ZIP：Windows x64、macOS arm64 和 macOS x86_64。每个包都包含 `SHA256SUMS.txt`。macOS 包是实验性支持包。发布包不含官方 Copilot 可执行文件、官方 `GitHub Copilot.app`、图标或其他官方应用资源；词典仅收录界面匹配所需的英文短语及其中文译文。
 
 ## 许可证
 

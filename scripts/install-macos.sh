@@ -26,8 +26,11 @@ else
         official_app="/Applications/GitHub Copilot.app"
     fi
 fi
-install_root="${HOME}/Applications/GitHub Copilot 中文版.app"
-resources_root="${install_root}/Contents/Resources"
+applications_root="${HOME}/Applications"
+install_root="${applications_root}/GitHub Copilot 中文版.app"
+staging_root="${applications_root}/.GitHub Copilot 中文版.app.install.$$"
+backup_root="${applications_root}/.GitHub Copilot 中文版.app.backup.$$"
+resources_root="${staging_root}/Contents/Resources"
 config_path="${resources_root}/config.json"
 
 if [[ "$install_root" != "${HOME}/Applications/GitHub Copilot 中文版.app" ]]; then
@@ -67,14 +70,36 @@ if [[ "$dry_run" -eq 1 ]]; then
     exit 0
 fi
 
-/bin/mkdir -p "${HOME}/Applications"
-/bin/rm -rf -- "$install_root"
-/usr/bin/ditto --rsrc --extattr "$source_app" "$install_root"
+/bin/mkdir -p "$applications_root"
+
+cleanup_install() {
+    /bin/rm -rf -- "$staging_root"
+    if [[ -e "$backup_root" ]]; then
+        if [[ ! -e "$install_root" ]]; then
+            /bin/mv -- "$backup_root" "$install_root"
+        else
+            /bin/rm -rf -- "$backup_root"
+        fi
+    fi
+}
+trap cleanup_install EXIT
+
+/bin/rm -rf -- "$staging_root" "$backup_root"
+/usr/bin/ditto --rsrc --extattr "$source_app" "$staging_root"
 
 json_path="${official_app//\\/\\\\}"
 json_path="${json_path//\"/\\\"}"
 /bin/mkdir -p "$resources_root"
 /usr/bin/printf '{\n  "copilot_executable": "%s"\n}\n' "$json_path" > "$config_path"
 /bin/chmod 600 "$config_path"
+/usr/bin/codesign --force --deep --sign - "$staging_root" >/dev/null
+/usr/bin/codesign --verify --deep --strict "$staging_root"
+
+if [[ -e "$install_root" ]]; then
+    /bin/mv -- "$install_root" "$backup_root"
+fi
+/bin/mv -- "$staging_root" "$install_root"
+/bin/rm -rf -- "$backup_root"
+trap - EXIT
 
 printf '安装完成：%s\n请从“应用程序”或 Finder 打开该应用。首次启动前请先退出正在运行的官方 Copilot。\n' "$install_root"

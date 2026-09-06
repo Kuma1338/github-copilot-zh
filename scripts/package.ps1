@@ -6,6 +6,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$') {
+    throw "版本号格式无效：$Version"
+}
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 Push-Location $projectRoot
 try {
@@ -37,6 +40,8 @@ try {
     Copy-Item -LiteralPath '安装.cmd' -Destination $artifactRoot
     Copy-Item -LiteralPath '卸载.cmd' -Destination $artifactRoot
     Copy-Item -LiteralPath 'README.md' -Destination $artifactRoot
+    $utf8NoBom = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText((Join-Path $artifactRoot 'VERSION'), "$Version`n", $utf8NoBom)
 
     $hashLines = Get-ChildItem -LiteralPath $artifactRoot -Recurse -File |
         Sort-Object FullName |
@@ -45,7 +50,7 @@ try {
             $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $relative"
         }
-    [IO.File]::WriteAllLines((Join-Path $artifactRoot 'SHA256SUMS.txt'), $hashLines, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllLines((Join-Path $artifactRoot 'SHA256SUMS.txt'), $hashLines, $utf8NoBom)
 
     $outputRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
     New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null

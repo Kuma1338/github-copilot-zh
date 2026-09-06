@@ -32,6 +32,15 @@ jobs:
           toolchain: stable
       - name: Install JavaScript dependencies
         run: npm ci
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts, tests -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors) { throw "PowerShell syntax error in $($_.FullName): $($parseErrors -join '; ')" }
+          }
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Run tests
@@ -119,10 +128,15 @@ jobs:
             echo '没有找到发布包。' >&2
             exit 1
           fi
-          sha256sum "${assets[@]}" > release-assets/SHA256SUMS.txt
+          (
+            cd release-assets
+            sha256sum *.zip > SHA256SUMS.txt
+          )
           assets+=(release-assets/SHA256SUMS.txt)
+          release_notes=$'Windows x64 为已验证版本。\n\nmacOS arm64/x86_64 为实验包：当前官方生产版 WKWebView 没有稳定公开的 Inspector/CDP 注入接口，因此不保证显示中文。'
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "GitHub Copilot 中文版 ${GITHUB_REF_NAME#v}" --notes "$release_notes"
           else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "GitHub Copilot 中文版 ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "GitHub Copilot 中文版 ${GITHUB_REF_NAME#v}" --notes "$release_notes"
           fi
