@@ -25,7 +25,22 @@ function Get-CopilotExecutable {
         if ($_.Path) { $candidates.Add($_.Path) }
     }
 
-    $candidates.Add('C:\Path\To\github.exe')
+    $shell = New-Object -ComObject WScript.Shell
+    $desktopDirectories = @(
+        [Environment]::GetFolderPath('Desktop'),
+        [Environment]::GetFolderPath('CommonDesktopDirectory')
+    ) | Where-Object { $_ } | Select-Object -Unique
+    foreach ($desktopDirectory in $desktopDirectories) {
+        $officialShortcut = Join-Path $desktopDirectory 'GitHub Copilot.lnk'
+        if (-not (Test-Path -LiteralPath $officialShortcut -PathType Leaf)) { continue }
+        try {
+            $target = $shell.CreateShortcut($officialShortcut).TargetPath
+            if ($target) { $candidates.Add($target) }
+        } catch {
+            continue
+        }
+    }
+
     $uninstallRoots = @(
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',

@@ -162,9 +162,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn verifies_the_installed_github_copilot_signature() {
-        let path = std::path::Path::new(r"C:\Path\To\github.exe");
-        if path.exists() {
-            super::verify_github_signature(path).unwrap();
+        if let Ok(path) = crate::app::discover_executable(&crate::config::AppConfig::default()) {
+            super::verify_github_signature(&path).unwrap();
         }
     }
 }

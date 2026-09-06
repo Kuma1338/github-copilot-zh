@@ -182,7 +182,6 @@ pub fn default_candidates() -> Vec<PathBuf> {
     #[cfg(windows)]
     {
         paths.extend(registry_install_paths());
-        paths.push(PathBuf::from(r"C:\Path\To\github.exe"));
 
         if let Some(local) = env::var_os("LOCALAPPDATA") {
             paths.push(PathBuf::from(&local).join(r"Programs\GitHub Copilot\github.exe"));
@@ -257,6 +256,16 @@ Get-ItemProperty $roots -ErrorAction SilentlyContinue |
     if ($_.InstallLocation) { Join-Path $_.InstallLocation 'github.exe' }
     elseif ($_.DisplayIcon) { $_.DisplayIcon -replace ',\d+$','' }
   }
+$shell = New-Object -ComObject WScript.Shell
+@(
+  [Environment]::GetFolderPath('Desktop'),
+  [Environment]::GetFolderPath('CommonDesktopDirectory')
+) | Where-Object { $_ } | Select-Object -Unique | ForEach-Object {
+  $shortcut = Join-Path $_ 'GitHub Copilot.lnk'
+  if (Test-Path -LiteralPath $shortcut -PathType Leaf) {
+    try { $shell.CreateShortcut($shortcut).TargetPath } catch {}
+  }
+}
 "#;
     hidden_powershell(script)
         .ok()

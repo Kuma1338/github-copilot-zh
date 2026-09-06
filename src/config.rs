@@ -73,13 +73,13 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         fs::write(
             temp.path().join("config.json"),
-            r#"{"copilot_executable":"C:\\Path\\To\\github.exe"}"#,
+            r#"{"copilot_executable":"C:\\Apps\\GitHub Copilot\\github.exe"}"#,
         )
         .unwrap();
         let config = AppConfig::load(temp.path()).unwrap();
         assert_eq!(
             config.copilot_executable,
-            Some(PathBuf::from(r"C:\Path\To\github.exe"))
+            Some(PathBuf::from(r"C:\Apps\GitHub Copilot\github.exe"))
         );
     }
 
