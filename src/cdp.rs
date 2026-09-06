@@ -373,7 +373,7 @@ mod tests {
         let error = validate_injection_result(Default::default(), true, false)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("可注入"));
+        assert_eq!(error, super::injection_failure_message());
 
         validate_injection_result(
             super::InjectionStats {
