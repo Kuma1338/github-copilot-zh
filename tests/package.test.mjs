@@ -69,6 +69,15 @@ test('Windows package carries its release version into the install manifest', as
   assert.match(installerSource, /version = \$packageVersion/);
 });
 
+test('release builds remap local Rust source paths', async () => {
+  const windowsSource = await readFile(new URL('../scripts/package.ps1', import.meta.url), 'utf8');
+  const macosSource = await readFile(new URL('../scripts/package-macos.sh', import.meta.url), 'utf8');
+
+  assert.match(windowsSource, /CARGO_ENCODED_RUSTFLAGS/);
+  assert.match(windowsSource, /--remap-path-prefix=/);
+  assert.match(macosSource, /--remap-path-prefix=/);
+});
+
 test('macOS installer stages, configures, signs, and atomically replaces the launcher', async () => {
   const source = await readFile(new URL('../scripts/install-macos.sh', import.meta.url), 'utf8');
   const stagePosition = source.indexOf('"$source_app" "$staging_root"');

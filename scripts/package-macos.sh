@@ -30,6 +30,17 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 project_root="$(cd -- "${script_dir}/.." && pwd -P)"
 cd "$project_root"
 
+rust_flag_separator=$'\x1f'
+encoded_remap_flags="--remap-path-prefix=${project_root}=."
+if [[ -n "${HOME:-}" ]]; then
+    encoded_remap_flags+="${rust_flag_separator}--remap-path-prefix=${HOME}=/user"
+fi
+if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+    export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}${rust_flag_separator}${encoded_remap_flags}"
+else
+    export CARGO_ENCODED_RUSTFLAGS="$encoded_remap_flags"
+fi
+
 for required in macos/Info.plist localization/runtime.js localization/zh-CN.json scripts/install-macos.sh scripts/uninstall-macos.sh README.md; do
     if [[ ! -f "$required" ]]; then
         printf '缺少打包文件：%s\n' "$required" >&2

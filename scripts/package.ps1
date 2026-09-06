@@ -10,6 +10,17 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$') {
     throw "版本号格式无效：$Version"
 }
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+$previousEncodedRustFlags = [Environment]::GetEnvironmentVariable('CARGO_ENCODED_RUSTFLAGS', 'Process')
+$rustFlagSeparator = [char]0x1f
+$remapFlags = [System.Collections.Generic.List[string]]::new()
+$remapFlags.Add("--remap-path-prefix=$projectRoot=.")
+if ($env:USERPROFILE) {
+    $remapFlags.Add("--remap-path-prefix=$([IO.Path]::GetFullPath($env:USERPROFILE))=/user")
+}
+$encodedRustFlags = [System.Collections.Generic.List[string]]::new()
+if ($previousEncodedRustFlags) { $encodedRustFlags.Add($previousEncodedRustFlags) }
+$encodedRustFlags.AddRange($remapFlags)
+$env:CARGO_ENCODED_RUSTFLAGS = $encodedRustFlags -join $rustFlagSeparator
 Push-Location $projectRoot
 try {
     $status = git status --porcelain
@@ -60,4 +71,9 @@ try {
     Write-Output $zipPath
 } finally {
     Pop-Location
+    if ($null -eq $previousEncodedRustFlags) {
+        Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
+    } else {
+        $env:CARGO_ENCODED_RUSTFLAGS = $previousEncodedRustFlags
+    }
 }
