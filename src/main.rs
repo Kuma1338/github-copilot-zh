@@ -7,7 +7,7 @@ use copilot_zh::{
     config::{AppConfig, Dictionary},
     logging, signature, ui,
 };
-use std::{env, fs, path::PathBuf};
+use std::{env, fs};
 
 fn main() {
     if let Err(error) = run() {
@@ -16,11 +16,8 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let base_dir = env::current_exe()
-        .context("无法确定启动器路径")?
-        .parent()
-        .map(PathBuf::from)
-        .context("启动器路径无效")?;
+    let launcher_path = env::current_exe().context("无法确定启动器路径")?;
+    let base_dir = app::resource_base_dir(&launcher_path)?;
     let config = AppConfig::load(&base_dir)?;
     let executable = app::discover_executable(&config)?;
     if app::is_copilot_running(&executable) {
@@ -50,16 +47,15 @@ fn run() -> Result<()> {
 
     let port = cdp::allocate_loopback_port()?;
     let mut child = app::launch_copilot(&executable, port)?;
-    let log_dir = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| base_dir.clone())
-        .join("GitHubCopilotZh");
+    let log_dir = app::data_directory(&base_dir);
 
     match cdp::run_injector(port, &source, child.id()) {
         Ok(stats) => {
             let _ = logging::write_session_log(&log_dir, &version, tested_version, stats);
         }
         Err(error) => {
+            #[cfg(target_os = "macos")]
+            let _ = child.terminate();
             let _ = logging::write_session_log(
                 &log_dir,
                 &version,

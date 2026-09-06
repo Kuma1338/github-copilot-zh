@@ -35,6 +35,17 @@ pub fn allocate_loopback_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+pub fn endpoint_paths(port: u16) -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::inspector_endpoint_paths(port)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        vec![format!("http://127.0.0.1:{port}/json/list")]
+    }
+}
+
 pub fn build_injection_source(runtime: &str, dictionary: &Dictionary) -> Result<String> {
     let dictionary_json = serde_json::to_string(dictionary)?
         .replace('<', "\\u003c")
@@ -47,11 +58,23 @@ pub fn build_injection_source(runtime: &str, dictionary: &Dictionary) -> Result<
 }
 
 pub fn parse_targets(body: &str) -> Result<Vec<DevToolsTarget>> {
-    let targets: Vec<DevToolsTarget> =
-        serde_json::from_str(body).context("DevTools 目标列表不是有效 JSON")?;
+    let value: Value = serde_json::from_str(body).context("DevTools 目标列表不是有效 JSON")?;
+    let values = match value {
+        Value::Array(values) => values,
+        Value::Object(mut object) => match object.remove("targets") {
+            Some(Value::Array(values)) => values,
+            Some(_) => bail!("DevTools targets 字段不是数组"),
+            None => vec![Value::Object(object)],
+        },
+        _ => bail!("DevTools 目标列表不是数组或对象"),
+    };
+    let targets = values
+        .into_iter()
+        .map(|value| serde_json::from_value(value).context("DevTools 目标格式无效"))
+        .collect::<Result<Vec<DevToolsTarget>>>()?;
     Ok(targets
         .into_iter()
-        .filter(|target| matches!(target.target_type.as_str(), "page" | "webview"))
+        .filter(|target| matches!(target.target_type.as_str(), "page" | "webview" | "webpage"))
         .filter(|target| {
             target
                 .web_socket_debugger_url
@@ -63,7 +86,7 @@ pub fn parse_targets(body: &str) -> Result<Vec<DevToolsTarget>> {
 }
 
 pub fn run_injector(port: u16, source: &str, app_pid: u32) -> Result<InjectionStats> {
-    let endpoint = format!("http://127.0.0.1:{port}/json/list");
+    let endpoints = endpoint_paths(port);
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(1))
         .timeout_read(Duration::from_secs(2))
@@ -73,15 +96,16 @@ pub fn run_injector(port: u16, source: &str, app_pid: u32) -> Result<InjectionSt
     let mut injected = HashSet::new();
     let mut attempts: HashMap<String, u8> = HashMap::new();
     let mut devtools_seen = false;
+    let mut injectable_target_seen = false;
+    let mut active_endpoint = None;
 
     while process_exists(app_pid) {
-        match agent.get(&endpoint).call() {
-            Ok(response) => {
+        match fetch_target_list(&agent, &endpoints, &mut active_endpoint)? {
+            Some(body) => {
                 devtools_seen = true;
-                let body = response
-                    .into_string()
-                    .context("无法读取 DevTools 目标列表")?;
-                for target in parse_targets(&body)? {
+                let targets = parse_targets(&body)?;
+                injectable_target_seen |= !targets.is_empty();
+                for target in targets {
                     stats.targets_seen += usize::from(!attempts.contains_key(&target.id));
                     if injected.contains(&target.id) {
                         continue;
@@ -100,18 +124,82 @@ pub fn run_injector(port: u16, source: &str, app_pid: u32) -> Result<InjectionSt
                     }
                 }
             }
-            Err(_) if !devtools_seen && Instant::now() >= startup_deadline => {
-                bail!("应用已启动，但 WebView2 调试接口在 15 秒内没有响应")
+            None if (!devtools_seen || !injectable_target_seen)
+                && Instant::now() >= startup_deadline =>
+            {
+                bail!(inspector_timeout_message())
             }
-            Err(_) => {}
+            None => {}
         }
         thread::sleep(Duration::from_millis(750));
     }
 
-    if !devtools_seen {
-        bail!("GitHub Copilot 在 WebView2 调试接口就绪前退出")
-    }
+    validate_injection_result(stats, devtools_seen, injectable_target_seen)?;
     Ok(stats)
+}
+
+fn validate_injection_result(
+    stats: InjectionStats,
+    devtools_seen: bool,
+    injectable_target_seen: bool,
+) -> Result<()> {
+    if !devtools_seen || !injectable_target_seen || stats.targets_injected == 0 {
+        bail!(injection_failure_message())
+    }
+    Ok(())
+}
+
+fn injection_failure_message() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "当前官方 macOS 版没有返回可用的 Inspector/CDP 页面目标，未注入汉化层。请使用官方应用，或等待官方开放可调试接口。"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "应用已启动，但 WebView2 调试接口没有返回可注入的页面目标"
+    }
+}
+
+fn fetch_target_list(
+    agent: &ureq::Agent,
+    endpoints: &[String],
+    active_endpoint: &mut Option<String>,
+) -> Result<Option<String>> {
+    if let Some(endpoint) = active_endpoint.as_deref() {
+        match agent.get(endpoint).call() {
+            Ok(response) => {
+                return Ok(Some(
+                    response
+                        .into_string()
+                        .context("无法读取 DevTools 目标列表")?,
+                ))
+            }
+            Err(_) => *active_endpoint = None,
+        }
+    }
+
+    for endpoint in endpoints {
+        if let Ok(response) = agent.get(endpoint).call() {
+            *active_endpoint = Some(endpoint.clone());
+            return Ok(Some(
+                response
+                    .into_string()
+                    .context("无法读取 DevTools 目标列表")?,
+            ));
+        }
+    }
+    Ok(None)
+}
+
+fn inspector_timeout_message() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::unsupported_inspector_message()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "应用已启动，但 WebView2 调试接口在 15 秒内没有响应"
+    }
 }
 
 fn process_exists(pid: u32) -> bool {
@@ -187,6 +275,7 @@ fn parse_cdp_response(message: &str) -> Result<Option<u64>> {
 mod tests {
     use super::{
         allocate_loopback_port, build_injection_source, parse_cdp_response, parse_targets,
+        validate_injection_result,
     };
     use crate::config::{Dictionary, Pattern};
     use std::collections::BTreeMap;
@@ -209,6 +298,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_webkit_single_target_and_webpage_target_types() {
+        let json = r#"{
+          "id":"webkit",
+          "type":"webpage",
+          "url":"tauri://localhost",
+          "webSocketDebuggerUrl":"ws://127.0.0.1:43123/devtools/page/webkit"
+        }"#;
+        let targets = parse_targets(json).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "webkit");
+    }
+
+    #[test]
     fn builds_safe_dictionary_assignment_before_runtime() {
         let dictionary = Dictionary {
             version: 1,
@@ -217,6 +319,7 @@ mod tests {
             patterns: vec![Pattern {
                 source: "{count} files".into(),
                 target: "{count} 个文件".into(),
+                parameter_rules: BTreeMap::new(),
             }],
             excluded_selectors: vec!["code".into()],
         };
@@ -263,5 +366,24 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(script_error.contains("Uncaught"));
+    }
+
+    #[test]
+    fn rejects_a_devtools_endpoint_without_an_injectable_target() {
+        let error = validate_injection_result(Default::default(), true, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("可注入"));
+
+        validate_injection_result(
+            super::InjectionStats {
+                targets_seen: 1,
+                targets_injected: 1,
+                errors: 0,
+            },
+            true,
+            true,
+        )
+        .unwrap();
     }
 }

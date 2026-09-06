@@ -2,7 +2,6 @@ use crate::config::AppConfig;
 use anyhow::{bail, Context, Result};
 use std::{
     env,
-    ffi::OsString,
     path::{Path, PathBuf},
     process::{Child, Command},
 };
@@ -10,6 +9,7 @@ use sysinfo::System;
 
 #[cfg(windows)]
 use std::{
+    ffi::OsString,
     mem::{size_of, zeroed},
     os::windows::{ffi::OsStrExt, process::CommandExt},
     ptr::{null, null_mut},
@@ -29,7 +29,9 @@ use windows_sys::Win32::{
     },
 };
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
 const MEDIUM_INTEGRITY_RID: u32 = 0x2000;
 #[cfg(windows)]
 const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
@@ -71,6 +73,25 @@ impl CopilotProcess {
             }
         }
     }
+
+    pub fn terminate(&mut self) -> Result<()> {
+        match self {
+            Self::Standard(child) => {
+                child.kill().context("无法关闭 GitHub Copilot")?;
+                child.wait().context("等待 GitHub Copilot 关闭失败")?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Token { handle, .. } => {
+                if unsafe { windows_sys::Win32::System::Threading::TerminateProcess(*handle, 1) }
+                    == 0
+                {
+                    return Err(std::io::Error::last_os_error()).context("无法关闭 GitHub Copilot");
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -102,17 +123,54 @@ pub fn discover_executable(config: &AppConfig) -> Result<PathBuf> {
     discover_executable_from_candidates(config, default_candidates())
 }
 
+pub fn resource_base_dir(launcher_path: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        if launcher_path.parent().is_none() {
+            bail!("启动器路径无效");
+        }
+        Ok(crate::macos::resource_base_dir(launcher_path))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        launcher_path
+            .parent()
+            .map(PathBuf::from)
+            .context("启动器路径无效")
+    }
+}
+
+pub fn data_directory(fallback: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local_app_data).join("GitHubCopilotZh");
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("GitHubCopilotZh");
+    }
+    fallback.join("GitHubCopilotZh")
+}
+
 pub fn discover_executable_from_candidates(
     config: &AppConfig,
     candidates: Vec<PathBuf>,
 ) -> Result<PathBuf> {
     if let Some(path) = &config.copilot_executable {
-        if path.is_file() {
-            return Ok(path.clone());
+        let normalized = normalize_candidate(path);
+        if normalized.is_file() {
+            return Ok(normalized);
         }
     }
 
-    if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+    if let Some(path) = candidates
+        .into_iter()
+        .map(|path| normalize_candidate(&path))
+        .find(|path| path.is_file())
+    {
         return Ok(path);
     }
 
@@ -121,16 +179,21 @@ pub fn discover_executable_from_candidates(
 
 pub fn default_candidates() -> Vec<PathBuf> {
     let mut paths = running_github_paths();
-    paths.extend(registry_install_paths());
-    paths.push(PathBuf::from(r"C:\Path\To\github.exe"));
+    #[cfg(windows)]
+    {
+        paths.extend(registry_install_paths());
+        paths.push(PathBuf::from(r"C:\Path\To\github.exe"));
 
-    if let Some(local) = env::var_os("LOCALAPPDATA") {
-        paths.push(PathBuf::from(&local).join(r"Programs\GitHub Copilot\github.exe"));
-        paths.push(PathBuf::from(&local).join(r"GitHub Copilot\github.exe"));
+        if let Some(local) = env::var_os("LOCALAPPDATA") {
+            paths.push(PathBuf::from(&local).join(r"Programs\GitHub Copilot\github.exe"));
+            paths.push(PathBuf::from(&local).join(r"GitHub Copilot\github.exe"));
+        }
+        if let Some(program_files) = env::var_os("ProgramFiles") {
+            paths.push(PathBuf::from(program_files).join(r"GitHub Copilot\github.exe"));
+        }
     }
-    if let Some(program_files) = env::var_os("ProgramFiles") {
-        paths.push(PathBuf::from(program_files).join(r"GitHub Copilot\github.exe"));
-    }
+    #[cfg(target_os = "macos")]
+    paths.extend(crate::macos::default_candidates());
 
     paths.sort();
     paths.dedup();
@@ -151,11 +214,36 @@ fn running_github_paths() -> Vec<PathBuf> {
     system
         .processes()
         .values()
-        .filter(|process| process.name().eq_ignore_ascii_case("github.exe"))
+        .filter(|process| {
+            #[cfg(windows)]
+            {
+                process.name().eq_ignore_ascii_case("github.exe")
+            }
+            #[cfg(target_os = "macos")]
+            {
+                process.exe().is_some_and(crate::macos::is_github_bundle)
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            {
+                false
+            }
+        })
         .filter_map(|process| process.exe().map(Path::to_path_buf))
         .collect()
 }
 
+fn normalize_candidate(path: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::bundle_executable_path(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(windows)]
 fn registry_install_paths() -> Vec<PathBuf> {
     let script = r#"
 $roots = @(
@@ -185,24 +273,47 @@ Get-ItemProperty $roots -ErrorAction SilentlyContinue |
 }
 
 pub fn launch_copilot(path: &Path, port: u16) -> Result<CopilotProcess> {
-    let existing = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
-    let args = webview_arguments(&existing, port);
-
     #[cfg(windows)]
-    if needs_medium_integrity_launch(current_integrity_rid()?) {
-        return launch_with_medium_integrity(path, &args);
+    {
+        let existing = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        let args = webview_arguments(&existing, port);
+
+        if needs_medium_integrity_launch(current_integrity_rid()?) {
+            return launch_with_medium_integrity(path, &args);
+        }
+
+        let mut command = Command::new(path);
+        command.env("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", args);
+        command.creation_flags(0);
+        command
+            .spawn()
+            .map(CopilotProcess::Standard)
+            .with_context(|| format!("无法启动 {}", path.display()))
     }
 
-    let mut command = Command::new(path);
-    command.env("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", args);
-    #[cfg(windows)]
-    command.creation_flags(0);
-    command
-        .spawn()
-        .map(CopilotProcess::Standard)
-        .with_context(|| format!("无法启动 {}", path.display()))
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new(path);
+        for (key, value) in crate::macos::inspector_environment(port) {
+            command.env(key, value);
+        }
+        if let Some(parent) = path.parent() {
+            command.current_dir(parent);
+        }
+        command
+            .spawn()
+            .map(CopilotProcess::Standard)
+            .with_context(|| format!("无法启动 {}", path.display()))
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (path, port);
+        bail!("当前系统暂不支持 GitHub Copilot 中文启动器")
+    }
 }
 
+#[cfg(windows)]
 fn needs_medium_integrity_launch(integrity_rid: u32) -> bool {
     integrity_rid > MEDIUM_INTEGRITY_RID
 }
@@ -382,6 +493,7 @@ where
     block
 }
 
+#[cfg(windows)]
 pub fn product_version(path: &Path) -> Result<String> {
     let script = r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -407,6 +519,16 @@ Write-Output (Get-Item -LiteralPath $env:COPILOT_ZH_VERSION_PATH).VersionInfo.Pr
     parse_product_version(&String::from_utf8_lossy(&output.stdout))
 }
 
+#[cfg(target_os = "macos")]
+pub fn product_version(path: &Path) -> Result<String> {
+    crate::macos::product_version(path)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn product_version(_path: &Path) -> Result<String> {
+    bail!("当前系统无法读取 GitHub Copilot 版本")
+}
+
 pub fn parse_product_version(output: &str) -> Result<String> {
     output
         .lines()
@@ -426,6 +548,7 @@ pub fn webview_arguments(existing: &str, port: u16) -> String {
     }
 }
 
+#[cfg(windows)]
 fn hidden_powershell(script: &str) -> Result<std::process::Output> {
     let encoded = crate::signature::encode_powershell(script);
     let mut command = Command::new("powershell.exe");
@@ -443,12 +566,13 @@ fn hidden_powershell(script: &str) -> Result<std::process::Output> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_environment_block_from, discover_executable_from_candidates,
-        needs_medium_integrity_launch, parse_product_version, webview_arguments,
-    };
+    #[cfg(windows)]
+    use super::{build_environment_block_from, needs_medium_integrity_launch};
+    use super::{discover_executable_from_candidates, parse_product_version, webview_arguments};
     use crate::config::AppConfig;
-    use std::{ffi::OsString, fs};
+    #[cfg(windows)]
+    use std::ffi::OsString;
+    use std::fs;
 
     #[test]
     fn configured_existing_path_takes_precedence() {
@@ -519,6 +643,7 @@ mod tests {
         assert!(!entries.iter().any(|entry| entry.ends_with("=--old")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn elevated_processes_require_a_medium_integrity_child() {
         assert!(!needs_medium_integrity_launch(0x1000));

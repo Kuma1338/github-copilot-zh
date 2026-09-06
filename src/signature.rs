@@ -1,13 +1,32 @@
 use anyhow::{bail, Context, Result};
+#[cfg(windows)]
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::{path::Path, process::Command};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn verify_github_signature(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        verify_windows_signature(path)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        verify_macos_signature(path)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = path;
+        bail!("当前系统不支持官方应用签名校验")
+    }
+}
+
+#[cfg(windows)]
+fn verify_windows_signature(path: &Path) -> Result<()> {
     let script = r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Import-Module "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
@@ -35,9 +54,59 @@ if ($signature.SignerCertificate) { Write-Output $signature.SignerCertificate.Su
     parse_signature_output(&String::from_utf8_lossy(&output.stdout))
 }
 
+#[cfg(target_os = "macos")]
+fn verify_macos_signature(path: &Path) -> Result<()> {
+    let bundle = crate::macos::bundle_root(path)
+        .with_context(|| format!("无法从 {} 定位 .app bundle", path.display()))?;
+    let verification = Command::new("codesign")
+        .args(["--verify", "--deep", "--strict", "--verbose=2"])
+        .arg(&bundle)
+        .output()
+        .context("无法运行 macOS codesign 校验")?;
+    if !verification.status.success() {
+        bail!("GitHub Copilot 的 macOS 代码签名校验失败")
+    }
+
+    let details = Command::new("codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(&bundle)
+        .output()
+        .context("无法读取 macOS 代码签名信息")?;
+    let details = format!(
+        "{}{}",
+        String::from_utf8_lossy(&details.stdout),
+        String::from_utf8_lossy(&details.stderr)
+    );
+    parse_macos_signature_output(&details)?;
+
+    let assessment = Command::new("spctl")
+        .args(["--assess", "--type", "execute", "--verbose=2"])
+        .arg(&bundle)
+        .output()
+        .context("无法运行 macOS Gatekeeper 校验")?;
+    if !assessment.status.success() {
+        bail!("GitHub Copilot 未通过 macOS Gatekeeper 校验")
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 pub(crate) fn encode_powershell(script: &str) -> String {
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     STANDARD.encode(bytes)
+}
+
+pub fn parse_macos_signature_output(output: &str) -> Result<()> {
+    if !output
+        .lines()
+        .any(|line| line.trim() == "Identifier=com.github.githubapp")
+    {
+        bail!("程序标识不是官方 GitHub Copilot macOS bundle")
+    }
+    if !crate::macos::is_github_signature(output) {
+        bail!("程序签名者或 Team ID 不是 GitHub")
+    }
+    Ok(())
 }
 
 pub fn parse_signature_output(output: &str) -> Result<()> {

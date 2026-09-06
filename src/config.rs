@@ -40,6 +40,8 @@ pub struct Dictionary {
 pub struct Pattern {
     pub source: String,
     pub target: String,
+    #[serde(default, rename = "parameterRules")]
+    pub parameter_rules: BTreeMap<String, String>,
 }
 
 impl Dictionary {

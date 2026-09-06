@@ -116,7 +116,7 @@ $utf8NoBom = [Text.UTF8Encoding]::new($false)
 $config = @{ copilot_executable = $copilot } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $installRoot 'config.json'), $config, $utf8NoBom)
 $manifest = @{
-    version = '0.1.0'
+    version = '0.2.0'
     installedAt = [DateTime]::UtcNow.ToString('o')
     files = @(
         'copilot-zh.exe',
